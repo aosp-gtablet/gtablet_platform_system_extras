@@ -77,14 +77,32 @@ int main(int argc, char **argv)
             return -errno;
         }
     } else if (argc > 3) {
-        /* Copy the rest of the args from main. */
-        char *exec_args[argc - 1];
-        memset(exec_args, 0, sizeof(exec_args));
-        memcpy(exec_args, &argv[2], sizeof(exec_args));
-        if (execvp(argv[2], exec_args) < 0) {
-            fprintf(stderr, "su: exec failed for %s Error:%s\n", argv[2],
-                    strerror(errno));
-            return -errno;
+        int first_arg = 2;
+
+        /*
+         * try to be compatible with POSIX su's that needs "-c"
+         * which causes an SH to interpret the rest!
+         */
+        if(argv[first_arg][0]=='-' && argv[first_arg][1]=='c') {
+            /* just become sh, with the same arguments, offset by one! */
+
+            argv[1]=argv[0];
+            if(execvp("/system/bin/sh", argv+1) < 0) {
+                fprintf(stderr, "su: exec(sh) failed for %s Error:%s\n", argv[2],
+                        strerror(errno));
+                return -errno;
+            }
+
+        } else {
+            /* Copy the rest of the args from main. */
+            char *exec_args[argc - first_arg + 1];
+            memset(exec_args, 0, sizeof(exec_args));
+            memcpy(exec_args, &argv[first_arg], sizeof(exec_args));
+            if (execvp(argv[first_arg], exec_args) < 0) {
+                fprintf(stderr, "su: exec failed for %s Error:%s\n", argv[2],
+                        strerror(errno));
+                return -errno;
+            }
         }
     }
 
