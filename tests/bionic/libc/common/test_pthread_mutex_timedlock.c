@@ -47,8 +47,6 @@ panic(const char* func, const char* format, ...)
     exit(1);
 }
 
-static sem_t tm_sem;
-
 #define  PANIC(...)   panic(__FUNCTION__,__VA_ARGS__)
 
 static void __attribute__((noreturn))
@@ -78,6 +76,7 @@ error(int  errcode, const char* func, const char* format, ...)
 typedef struct {
     pthread_mutex_t  mutex[1];
     double waitDelay;
+    sem_t tm_sem[1];
 } TState;
 
 static void
@@ -100,7 +99,7 @@ time_now(void)
 {
     struct timespec ts[1];
 
-    clock_gettime(CLOCK_MONOTONIC, ts);
+    clock_gettime(CLOCK_REALTIME, ts);
     return (double)ts->tv_sec + ts->tv_nsec/1e9;
 }
 
@@ -121,14 +120,13 @@ static void do_test_timedlock_1(pthread_mutexattr_t *attr)
 
     TZERO(pthread_mutex_init(&lock, attr));
     /* add 2 secs to current time */
-    clock_gettime(CLOCK_MONOTONIC, &abstime);
+    clock_gettime(CLOCK_REALTIME, &abstime);
     abstime.tv_sec+=2;
     /* Lock a unlocked mutex using timedlock */
     TZERO(pthread_mutex_timedlock(&lock,&abstime));
 
     TZERO(pthread_mutex_unlock(&lock));
     TZERO(pthread_mutex_destroy(&lock));
- 
 }
 
 static void do_test_timedlock_2(pthread_mutexattr_t *attr)
@@ -141,11 +139,11 @@ static void do_test_timedlock_2(pthread_mutexattr_t *attr)
     TZERO(pthread_mutex_lock(&lock));
 
     /* add 2 secs to current time */
-    clock_gettime(CLOCK_MONOTONIC, &abstime);
+    clock_gettime(CLOCK_REALTIME, &abstime);
     abstime.tv_sec+=2;
 
     /* Lock an already locked mutex */
- 
+
     TEXPECT_INT(pthread_mutex_timedlock(&lock, &abstime ),ETIMEDOUT);
 
     TZERO(pthread_mutex_unlock(&lock));
@@ -162,11 +160,11 @@ static void do_test_timedlock_rec(pthread_mutexattr_t *attr)
     TZERO(pthread_mutex_lock(&lock));
 
     /* add 2 secs to current time */
-    clock_gettime(CLOCK_MONOTONIC, &abstime);
+    clock_gettime(CLOCK_REALTIME, &abstime);
     abstime.tv_sec+=2;
 
     /* Lock an already recursive locked mutex */
- 
+
     TZERO(pthread_mutex_timedlock(&lock, &abstime ));
 
     TZERO(pthread_mutex_unlock(&lock));
@@ -183,11 +181,11 @@ static void do_test_timedlock_chk(pthread_mutexattr_t *attr)
     TZERO(pthread_mutex_lock(&lock));
 
     /* add 2 secs to current time */
-    clock_gettime(CLOCK_MONOTONIC, &abstime);
+    clock_gettime(CLOCK_REALTIME, &abstime);
     abstime.tv_sec+=2;
 
     /* Lock an already recursive locked mutex */
- 
+
     TEXPECT_INT(pthread_mutex_timedlock(&lock, &abstime ),EDEADLK);
 
     TZERO(pthread_mutex_unlock(&lock));
@@ -197,16 +195,13 @@ static void do_test_timedlock_chk(pthread_mutexattr_t *attr)
 static void* do_lock_for_seconds(void* arg)
 {
     TState *s=arg;
-    double t1;
 
     TZERO(pthread_mutex_trylock(s->mutex));
 
-    sem_post(&tm_sem);
+    sem_post(s->tm_sem);
 
     time_sleep(s->waitDelay);
-  
-    t1 = time_now();
-
+ 
     TZERO(pthread_mutex_unlock(s->mutex));
     return (NULL);
 }
@@ -214,22 +209,30 @@ static void* do_lock_for_seconds(void* arg)
 static void do_test_threaded_lock(pthread_mutexattr_t *attr)
 {
     TState s[1];
+    double t1;
     void* dummy;
     pthread_t th;
     s->waitDelay=2;
+
+    sem_init(s->tm_sem, 0, 0);
+
     TZERO(pthread_mutex_init(s->mutex, attr));
 
     pthread_create(&th, NULL, do_lock_for_seconds, s);
 
     struct timespec abstime;
 
-    clock_gettime(CLOCK_MONOTONIC, &abstime);
+    clock_gettime(CLOCK_REALTIME, &abstime);
 
     abstime.tv_sec+=s->waitDelay*2;
 
-    sem_wait(&tm_sem);
+    sem_wait(s->tm_sem);
+
+    t1 = time_now();
 
     TZERO(pthread_mutex_timedlock(s->mutex, &abstime));
+
+    TTRUE((time_now()-t1) >= s->waitDelay); 
 
     TZERO(pthread_mutex_unlock(s->mutex));
     TZERO(pthread_mutex_destroy(s->mutex));
@@ -253,13 +256,13 @@ static void test_MutexTimeout(int mutexType, int isShared)
     do_test_timedlock_1(attr);
 
     printf("   - Test: Threaded timedlock\n");
-    do_test_threaded_lock(attr); 
+    do_test_threaded_lock(attr);
 
     switch(mutexType)
     {
         case PTHREAD_MUTEX_NORMAL:
-            do_test_timedlock_2(attr);
             printf("   - Test: Timed lock 2\n");
+            do_test_timedlock_2(attr);
             break;
 
         case PTHREAD_MUTEX_RECURSIVE:
@@ -278,7 +281,6 @@ static void test_MutexTimeout(int mutexType, int isShared)
 int main(){
 
 
-    sem_init(&tm_sem, 0, 0);
 
     /* non-shared mutex */
     printf("Running non-shared mutex tests: \n");
