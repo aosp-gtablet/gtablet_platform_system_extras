@@ -44,7 +44,7 @@ if [ -z $MOUNT_POINT ]; then
 fi
 
 if [ -z $SIZE ]; then
-    SIZE=128M
+    SIZE=$((`du -sm $SRC_DIR | cut -f1`*11/10))M
 fi
 
 MAKE_EXT4FS_CMD="make_ext4fs $ENABLE_SPARSE_IMAGE -l $SIZE -a $MOUNT_POINT $OUTPUT_FILE $SRC_DIR"
